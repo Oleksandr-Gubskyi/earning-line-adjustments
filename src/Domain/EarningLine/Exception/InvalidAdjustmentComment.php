@@ -13,6 +13,11 @@ final class InvalidAdjustmentComment extends InvalidArgumentException
         return new self('A manual adjustment requires a comment explaining why it was made.');
     }
 
+    public static function containsControlCharacters(): self
+    {
+        return new self('Adjustment comment must not contain control characters.');
+    }
+
     public static function isNotValidUtf8(): self
     {
         return new self('Adjustment comment must be valid UTF-8.');

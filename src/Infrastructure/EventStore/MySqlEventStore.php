@@ -99,7 +99,16 @@ final class MySqlEventStore implements EventStore
             // on any row rolls back the whole statement. The transaction is an explicit
             // boundary for the day this method does more than one thing, not the reason
             // partial writes cannot happen.
-            $this->connection->transaction(function () use ($rows): void {
+            $this->connection->transaction(function () use ($streamId, $expectedVersion, $rows): void {
+                // The unique key alone is not the whole of optimistic concurrency: it
+                // proves no one took these versions, not that the stream is actually at
+                // the version the caller believed. Without this check, appending at a
+                // version ahead of reality succeeds and leaves a gap that makes the
+                // stream unreadable on the next load.
+                if ($this->currentVersionOf($streamId) !== $expectedVersion) {
+                    throw ConcurrencyConflict::atVersion($streamId, $expectedVersion);
+                }
+
                 $this->connection->table(self::TABLE)->insert($rows);
             });
         } catch (UniqueConstraintViolationException $e) {
@@ -107,18 +116,31 @@ final class MySqlEventStore implements EventStore
             // any integrity violation. This table carries exactly one unique key and no
             // foreign keys, so the only thing it can mean is a competing writer.
             // Adding a second constraint would invalidate that reasoning.
-            throw ConcurrencyConflict::atVersion($streamId, $expectedVersion);
+            throw ConcurrencyConflict::atVersion($streamId, $expectedVersion, $e);
         } catch (QueryException $e) {
             // A deadlock or a lock-wait timeout means the same thing to a caller:
             // the optimistic attempt did not go through, reload and decide again.
             // It does NOT arrive as DeadlockException here -- the framework only
             // raises that from a nested transaction.
             if ($this->concurrencyErrors->causedByConcurrencyError($e)) {
-                throw ConcurrencyConflict::atVersion($streamId, $expectedVersion);
+                throw ConcurrencyConflict::atVersion($streamId, $expectedVersion, $e);
             }
 
             throw $e;
         }
+    }
+
+    private function currentVersionOf(string $streamId): int
+    {
+        $highest = $this->connection->table(self::TABLE)
+            ->where('stream_id', $streamId)
+            ->max('stream_version');
+
+        if ($highest === null) {
+            return 0;
+        }
+
+        return is_int($highest) ? $highest : (int) (is_string($highest) ? $highest : 0);
     }
 
     private static function stringColumn(object $row, string $column): string

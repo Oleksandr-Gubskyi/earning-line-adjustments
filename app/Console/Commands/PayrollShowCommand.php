@@ -10,6 +10,7 @@ use Payroll\Application\Query\AuditHistoryView;
 use Payroll\Application\Query\EarningLineAuditHistory;
 use Payroll\Domain\EarningLine\EarningLineId;
 use Payroll\Domain\EarningLine\Exception\InvalidEarningLineId;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 
 /**
  * Reads a line's audit history back from the durable stream.
@@ -65,7 +66,9 @@ final class PayrollShowCommand extends Command
                 'Adjustment #'.$entry->number,
                 $this->amount($entry->amount->format()),
                 $this->amount($entry->valueAfter->format()),
-                $entry->comment,
+                // A comment is user text, and the table renders console markup.
+                // Without escaping, "<info>approved</info>" would print as "approved".
+                OutputFormatter::escape($entry->comment),
             ];
         }
 

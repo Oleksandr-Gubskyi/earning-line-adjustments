@@ -22,7 +22,7 @@ Requires Docker. Nothing else needs to be installed -- PHP, Composer and MySQL a
 run in containers.
 
 ```bash
-git clone git@github.com:Oleksandr-Gubskyi/earning-line-adjustments.git
+git clone https://github.com/Oleksandr-Gubskyi/earning-line-adjustments.git
 cd earning-line-adjustments
 
 cp .env.example .env
@@ -138,8 +138,8 @@ The specification leaves these open; each was decided deliberately.
 ## Trade-offs
 
 - **Event sourcing is not strictly required here.** A plain append-only ledger would satisfy every
-  stated rule. It was chosen because it makes the append-only guarantee structural rather than
-  conventional, keeps the history of system recalculations that a state model would overwrite, and
+  stated rule. It was chosen because it keeps the history of system recalculations that a
+  state model would overwrite, leaves no update or delete path in the storage API at all, and
   matches the approach described for the production codebase. What it does not do is protect any
   invariant that a state model could not.
 - **Laravel is not required either** — the specification says so explicitly. It is here as a thin
@@ -151,10 +151,16 @@ The specification leaves these open; each was decided deliberately.
 - **Logical event names cover renames only.** Storing `earning_line.manual_adjustment_added` rather
   than a class name means renaming a class does not break reading history. Adding, retyping or
   removing a field is not covered — upcasting is out of scope.
-- **Concurrency detection relies on one structural fact:** `domain_events` has exactly one unique key
-  and no foreign keys, so a unique-constraint violation there can only mean a stream conflict. That
-  is cheaper and more robust than parsing the index name out of a database message, and it is pinned
-  by a test. A second constraint would require revisiting it.
+- **Optimistic concurrency is enforced in two places.** The append checks the stream really is at the
+  expected version, because a unique index proves only that nobody took those version numbers -- not
+  that the stream is where the caller believed. The index then catches the case the check cannot: a
+  competing writer committing in between. Recognising that violation relies on one structural fact --
+  `domain_events` has exactly one unique key and no foreign keys -- which is cheaper and more robust
+  than parsing an index name out of a database message, and is pinned by a test. A second constraint
+  would require revisiting it.
+- **A conflicting writer waits rather than failing immediately.** It blocks on the unique-key lock
+  until the first transaction resolves. Recovery is always to reload and let the aggregate decide
+  again; no retry loop is built in.
 - **Deliberately not built:** snapshots, projections, upcasting, an event bus, queues, an HTTP API,
   authentication. Each belongs in a system with more than one aggregate and more than one event
   consumer.

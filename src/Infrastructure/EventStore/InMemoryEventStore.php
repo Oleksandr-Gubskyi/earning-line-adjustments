@@ -67,16 +67,25 @@ final class InMemoryEventStore implements EventStore
         // from the clock.
         $recordedAt = new DateTimeImmutable;
         $version = $expectedVersion;
+        $rows = [];
 
+        // Every row is built before any of them is stored. Serializing straight into
+        // the stream would let a failure on the third event leave the first two
+        // behind, which the SQL store cannot do -- it serializes the whole batch
+        // before it issues a single INSERT.
         foreach ($events as $event) {
             $serialized = $this->serializer->serialize($event);
 
-            $this->streams[$streamId][] = [
+            $rows[] = [
                 'type' => $serialized['type'],
                 'payload' => $serialized['payload'],
                 'version' => ++$version,
                 'recorded_at' => $recordedAt,
             ];
+        }
+
+        foreach ($rows as $row) {
+            $this->streams[$streamId][] = $row;
         }
     }
 }

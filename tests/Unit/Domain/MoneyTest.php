@@ -125,6 +125,30 @@ final class MoneyTest extends TestCase
         (void) Money::fromMinorUnits(PHP_INT_MAX)->add(Money::fromMinorUnits(1));
     }
 
+    public function test_the_supported_range_is_symmetric(): void
+    {
+        // PHP_INT_MIN is excluded on purpose: -PHP_INT_MIN does not fit in an int and
+        // would silently become a float, which would make negate() a partial function
+        // in a class whose whole point is that money never touches floating point.
+        self::assertSame(PHP_INT_MAX, Money::fromMinorUnits(PHP_INT_MAX)->minorUnits);
+        self::assertSame(-PHP_INT_MAX, Money::fromMinorUnits(-PHP_INT_MAX)->minorUnits);
+
+        $this->expectException(InvalidMoneyAmount::class);
+        Money::fromMinorUnits(PHP_INT_MIN);
+    }
+
+    public function test_negating_the_smallest_supported_amount_is_safe(): void
+    {
+        self::assertSame(PHP_INT_MAX, Money::fromMinorUnits(-PHP_INT_MAX)->negate()->minorUnits);
+    }
+
+    public function test_it_rejects_addition_that_overflows_downwards(): void
+    {
+        $this->expectException(InvalidMoneyAmount::class);
+
+        (void) Money::fromMinorUnits(-PHP_INT_MAX)->add(Money::fromMinorUnits(-1));
+    }
+
     public function test_it_negates(): void
     {
         self::assertSame(-2000, Money::fromDecimalString('20.00')->negate()->minorUnits);

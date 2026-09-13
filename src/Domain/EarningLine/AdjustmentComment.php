@@ -32,6 +32,15 @@ final readonly class AdjustmentComment
             throw InvalidAdjustmentComment::isEmpty();
         }
 
+        // \p{Cc} only: C0 and C1 control characters, which carry no meaning for a
+        // human reading an audit trail and would otherwise let a NUL byte pass as a
+        // perfectly valid reason. Format characters are left alone deliberately --
+        // rejecting \p{Cf} would also throw out the zero-width joiner that ordinary
+        // emoji sequences are built from.
+        if (preg_match('/\p{Cc}/u', $trimmed) === 1) {
+            throw InvalidAdjustmentComment::containsControlCharacters();
+        }
+
         return new self($trimmed);
     }
 
