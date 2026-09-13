@@ -49,10 +49,15 @@ final class EarningLine
     /**
      * Creates a line from the system's initial calculation.
      *
-     * This is the only way a line comes into existence. The constructor is private,
-     * so a second EarningLineCalculated cannot be appended to an existing stream --
-     * which would otherwise silently overwrite the system value during replay, even
-     * after the line had been frozen.
+     * This is the only way a line comes into existence through the command API: the
+     * constructor is private, so no caller can create a second one on a line it
+     * already loaded.
+     *
+     * That is a guarantee about this API, not about the stream. Anyone appending raw
+     * events to the store, or handing reconstitute() a doctored list, can still put a
+     * second EarningLineCalculated into a stream -- and replay would then overwrite
+     * the system value even after a freeze. Writing events directly is a trusted
+     * operation, and the repository is the only thing that does it.
      */
     public static function calculate(EarningLineId $id, Money $systemValue): self
     {
@@ -116,6 +121,12 @@ final class EarningLine
         if ($amount->isZero()) {
             throw AdjustmentAmountMustNotBeZero::create();
         }
+
+        // Checked before anything is recorded. Each operand can be valid on its own
+        // while the resulting current value is not, and an adjustment that is accepted
+        // and then makes the line unreadable is the worst possible outcome here: the
+        // stream is append-only, so the bad entry could never be taken back.
+        (void) $this->systemValue->add($this->adjustmentsTotal->add($amount));
 
         if (! $this->frozen) {
             $this->recordThat(new SystemValueFrozen($this->systemValue));

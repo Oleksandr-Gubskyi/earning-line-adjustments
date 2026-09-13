@@ -57,6 +57,23 @@ final class AdjustmentCommentTest extends TestCase
         AdjustmentComment::fromString("bad \x80 byte");
     }
 
+    #[DataProvider('commentsWithControlCharacters')]
+    public function test_it_rejects_control_characters(string $input): void
+    {
+        // "Non-empty after trim" is satisfied by a NUL byte, which is not a reason
+        // any human could read off an audit trail.
+        $this->expectException(InvalidAdjustmentComment::class);
+
+        AdjustmentComment::fromString($input);
+    }
+
+    public static function commentsWithControlCharacters(): iterable
+    {
+        yield 'nul byte' => ["Reversing\0deduction"];
+        yield 'bell' => ["Reversing\x07deduction"];
+        yield 'embedded newline' => ["Reversing\ndeduction"];
+    }
+
     #[DataProvider('unicodeComments')]
     public function test_it_preserves_valid_unicode(string $input): void
     {

@@ -63,9 +63,11 @@ There is **no `ManualAdjustment` entity inside the aggregate.** The immutable hi
 ordering and the audit view from that stream.
 
 This is a deliberate trade-off and the most likely question a reviewer will ask, given the task is
-titled *History of Manual Adjustments*. The reasoning: a collection inside the aggregate would be a
-**second representation of the same truth** sitting next to the stream, and two representations
-drift. The aggregate holds decision state; the stream holds history.
+titled *History of Manual Adjustments*. The honest reasoning is narrower than "two representations
+drift": a collection rebuilt in `apply()` would be derived state, exactly like `adjustmentsTotal`,
+so it would not drift on its own. It is left out because **no decision the aggregate makes needs
+it** — the freeze, the zero check and the current value are all answerable without it — and state an
+aggregate does not use is state someone will later be tempted to read from the wrong side. The aggregate holds decision state; the stream holds history.
 
 The honest cost: the aggregate cannot answer "how many adjustments do I have" without going to the
 event store, and the append-only rule is no longer enforced by the absence of a mutator on a
@@ -73,7 +75,12 @@ collection — it rests on the append-only nature of the stream. Both are covere
 
 ### Value objects
 
-- **`Money`** — integer minor units, signed, immutable. No floats anywhere.
+- **`Money`** — integer minor units, signed, immutable. No floats anywhere. The supported range is
+  deliberately symmetric, `-PHP_INT_MAX … PHP_INT_MAX`: `PHP_INT_MIN` is excluded because negating
+  it does not fit in an int and would silently produce a float. Arithmetic is checked before it is
+  performed, and a command whose **result** would fall outside the range is rejected before anything
+  is recorded — each operand can be valid while the sum is not, and an append-only log cannot take
+  a bad entry back.
   `fromDecimalString()` parses **as a string**, never via float: `(int)((float)"0.29" * 100)` yields
   `28`, and this silently corrupts roughly one amount in fifteen.
 - **`AdjustmentComment`** — required, non-empty after trim, valid UTF-8. Validates on the command
@@ -89,9 +96,11 @@ SystemValueFrozen           the freeze, as a first-class fact
 ManualAdjustmentAdded       Money $amount, string $comment
 ```
 
-`SystemValueFrozen` exists so the read side can show the frozen base value **without
-re-implementing the freeze rule**. Without it the query would have to scan for "the last
-recalculation before the first adjustment" — putting the most important business rule in two places.
+`SystemValueFrozen` records the freeze as a fact in its own right, so the read side reads the frozen
+base value instead of working it out. A query could reach the same number by other means — folding
+in version order and marking the freeze at the first `ManualAdjustmentAdded` would do it — so this
+is not the only correct design. It is defended as making an important business transition explicit
+and self-describing in the stream, not as the sole way to avoid duplicated rules.
 
 The first manual adjustment emits **two events in a single atomic append**:
 
@@ -122,8 +131,12 @@ operational concern.
 
 Enforced by the aggregate unless noted.
 
-1. A line is created exactly once — private constructor plus a static factory, so a second
-   `EarningLineCalculated` inside a stream is structurally impossible.
+1. A line is created exactly once **through the command API** — private constructor plus a static
+   factory, so no caller can create a second one on a line it already loaded. This is a guarantee
+   about the command API, not about the stream: appending raw events or handing `reconstitute()` a
+   doctored list can still put a second `EarningLineCalculated` into a stream, and replay would then
+   overwrite the system value even after a freeze. Writing events directly is a trusted operation,
+   and the repository is the only thing that performs it.
 2. While not frozen, recalculation **replaces** the system value; it never accumulates.
 3. The first manual adjustment **permanently** freezes the current system value.
 4. After the freeze, recalculation changes nothing and emits no event.
@@ -217,7 +230,13 @@ validation:** otherwise tightening a rule later would make old streams unreadabl
 
 ### Concurrency
 
-Optimistic, with the unique index as the sole arbiter.
+Optimistic, enforced in two places that do different jobs.
+
+`append()` first checks that the stream really is at `expectedVersion`. The unique index alone is
+**not** sufficient: it proves nobody took those version numbers, not that the stream is where the
+caller believed. Without the explicit check, appending at a version ahead of reality succeeds and
+leaves a gap that makes every later `load()` fail — with the damage already in an append-only source
+of truth. The index then catches the case the check cannot: another writer committing in between.
 
 - `Illuminate\Database\UniqueConstraintViolationException` → `ConcurrencyConflict`
 - any other `QueryException` that Laravel's `ConcurrencyErrorDetector` recognises (deadlock,
@@ -236,8 +255,17 @@ text and is brittle across drivers and versions. Instead we rely on a structural
 has exactly one unique key and no foreign keys — and pin it with a test that provokes a real
 duplicate key. **If a second constraint is ever added, this assumption must be revisited.**
 
-`load()` and `append()` never share a transaction: `innodb_lock_wait_timeout` defaults to 50
-seconds, so a competing writer would hang rather than fail fast.
+`load()` and `append()` never share a transaction, which keeps the write lock held for as short a
+time as possible. It does **not** make a competing writer fail fast: a second writer inserting the
+same version blocks on the unique-key lock until the first transaction resolves, and only then gets
+its conflict — or succeeds, if the first one rolled back. `innodb_lock_wait_timeout` (50s by
+default) is the ceiling on that wait. The recovery is always the same: reload the stream and let the
+aggregate decide again.
+
+One boundary worth stating: `save()` clears the aggregate's pending events once its own transaction
+commits. Inside a larger enclosing transaction that is not yet durability, and a later rollback would
+leave the aggregate believing it was saved. Nothing here opens one, and the repository owns the only
+transaction in play.
 
 ## 7. Replay rules
 

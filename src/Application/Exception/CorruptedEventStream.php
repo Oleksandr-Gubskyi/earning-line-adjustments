@@ -8,6 +8,14 @@ use RuntimeException;
 
 final class CorruptedEventStream extends RuntimeException
 {
+    public static function hasASecondCreation(string $streamId): self
+    {
+        return new self(sprintf(
+            'Stream "%s" contains more than one creation event and cannot be read reliably.',
+            $streamId,
+        ));
+    }
+
     public static function expectedVersion(int $expected, int $actual): self
     {
         return new self(sprintf(

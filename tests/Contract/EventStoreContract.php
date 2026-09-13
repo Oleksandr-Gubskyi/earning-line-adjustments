@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Contract;
 
+use JsonException;
 use Payroll\Application\Exception\ConcurrencyConflict;
 use Payroll\Application\Port\EventStore;
 use Payroll\Domain\EarningLine\EarningLineId;
@@ -118,6 +119,74 @@ trait EventStoreContract
         $events = $stream->domainEvents();
         self::assertInstanceOf(SystemValueRecalculated::class, $events[1]);
         self::assertSame(105000, $events[1]->systemValue->minorUnits, 'The winner must be the first writer.');
+    }
+
+    public function test_a_version_ahead_of_the_stream_is_rejected(): void
+    {
+        $store = $this->createStore();
+        $id = EarningLineId::generate();
+
+        // The unique key proves nobody took these versions; it does not prove the
+        // stream is where the caller thinks it is. Accepting this would leave a gap
+        // that makes every later load fail, and the damage is already in the
+        // append-only source of truth by the time anyone notices.
+        $this->expectException(ConcurrencyConflict::class);
+
+        $store->append($id, 7, [new EarningLineCalculated(Money::fromDecimalString('1000.00'))]);
+    }
+
+    public function test_a_version_ahead_of_an_existing_stream_is_rejected(): void
+    {
+        $store = $this->createStore();
+        $id = EarningLineId::generate();
+
+        $store->append($id, 0, [new EarningLineCalculated(Money::fromDecimalString('1000.00'))]);
+
+        try {
+            $store->append($id, 5, [new SystemValueRecalculated(Money::fromDecimalString('1050.00'))]);
+            self::fail('A version ahead of the stream should have been rejected.');
+        } catch (ConcurrencyConflict) {
+            // expected
+        }
+
+        self::assertSame(1, $store->load($id)->currentVersion, 'The stream must be untouched.');
+    }
+
+    public function test_a_negative_version_is_rejected(): void
+    {
+        $store = $this->createStore();
+
+        $this->expectException(ConcurrencyConflict::class);
+
+        $store->append(
+            EarningLineId::generate(),
+            -1,
+            [new EarningLineCalculated(Money::fromDecimalString('1000.00'))],
+        );
+    }
+
+    public function test_a_failure_part_way_through_a_batch_stores_nothing(): void
+    {
+        $store = $this->createStore();
+        $id = EarningLineId::generate();
+
+        $store->append($id, 0, [new EarningLineCalculated(Money::fromDecimalString('1000.00'))]);
+
+        try {
+            $store->append($id, 1, [
+                new SystemValueFrozen(Money::fromDecimalString('1000.00')),
+                // Malformed UTF-8 fails to serialize. AdjustmentComment rejects this
+                // on the command side, so the only way here is a raw event -- but the
+                // store promises all-or-nothing, and a promise only holds if it holds
+                // when something breaks.
+                new ManualAdjustmentAdded(Money::fromMinorUnits(-1), "bad \x80 byte"),
+            ]);
+            self::fail('The malformed event should have failed to serialize.');
+        } catch (JsonException) {
+            // expected
+        }
+
+        self::assertSame(1, $store->load($id)->currentVersion, 'The freeze must not have survived alone.');
     }
 
     public function test_appending_nothing_changes_nothing(): void

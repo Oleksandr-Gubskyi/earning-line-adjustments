@@ -17,10 +17,22 @@ use Payroll\Domain\Exception\InvalidMoneyAmount;
  */
 final readonly class Money
 {
+    /**
+     * PHP_INT_MIN is excluded so the range is symmetric and negate() is total:
+     * -PHP_INT_MIN does not fit in an int and would silently become a float.
+     */
+    public const int MAX_MINOR_UNITS = PHP_INT_MAX;
+
+    public const int MIN_MINOR_UNITS = -PHP_INT_MAX;
+
     private function __construct(public int $minorUnits) {}
 
     public static function fromMinorUnits(int $minorUnits): self
     {
+        if ($minorUnits < self::MIN_MINOR_UNITS) {
+            throw InvalidMoneyAmount::outOfRange((string) $minorUnits);
+        }
+
         return new self($minorUnits);
     }
 
@@ -64,8 +76,8 @@ final readonly class Money
         // overflowing int to float, and a post-hoc is_int() check reads as dead
         // code to static analysis even though it fires at runtime.
         $overflows = $other->minorUnits > 0
-            ? $this->minorUnits > PHP_INT_MAX - $other->minorUnits
-            : $this->minorUnits < PHP_INT_MIN - $other->minorUnits;
+            ? $this->minorUnits > self::MAX_MINOR_UNITS - $other->minorUnits
+            : $this->minorUnits < self::MIN_MINOR_UNITS - $other->minorUnits;
 
         if ($overflows) {
             throw InvalidMoneyAmount::additionOverflowed();

@@ -14,6 +14,7 @@ use Payroll\Domain\EarningLine\Event\SystemValueRecalculated;
 use Payroll\Domain\EarningLine\Exception\AdjustmentAmountMustNotBeZero;
 use Payroll\Domain\EarningLine\Exception\EarningLineStreamIsEmpty;
 use Payroll\Domain\EarningLine\RecalculationResult;
+use Payroll\Domain\Exception\InvalidMoneyAmount;
 use Payroll\Domain\Money;
 use PHPUnit\Framework\TestCase;
 
@@ -178,6 +179,26 @@ final class EarningLineTest extends TestCase
 
         self::assertFalse($line->isFrozen());
         self::assertSame([], $line->pendingEvents());
+    }
+
+    public function test_an_adjustment_that_would_make_the_line_unreadable_is_rejected(): void
+    {
+        $line = EarningLine::calculate(EarningLineId::generate(), Money::fromMinorUnits(PHP_INT_MAX));
+        $line->commit();
+
+        // Both operands are valid on their own; the sum is not. Accepting this would
+        // append an entry that makes currentValue() and the whole audit history throw
+        // -- and the stream is append-only, so it could never be taken back.
+        try {
+            $line->addManualAdjustment(Money::fromMinorUnits(1), self::comment());
+            self::fail('The adjustment should have been rejected.');
+        } catch (InvalidMoneyAmount) {
+            // expected
+        }
+
+        self::assertSame([], $line->pendingEvents(), 'Nothing may be recorded.');
+        self::assertFalse($line->isFrozen(), 'The line must not have been frozen by a rejected command.');
+        self::assertSame(PHP_INT_MAX, $line->currentValue()->minorUnits);
     }
 
     public function test_the_current_value_is_always_the_system_value_plus_the_adjustments(): void

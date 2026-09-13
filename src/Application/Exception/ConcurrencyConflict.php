@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Payroll\Application\Exception;
 
 use RuntimeException;
+use Throwable;
 
 /**
  * Someone else wrote to this stream since it was loaded.
@@ -14,12 +15,19 @@ use RuntimeException;
  */
 final class ConcurrencyConflict extends RuntimeException
 {
-    public static function atVersion(string $streamId, int $expectedVersion): self
+    public static function atVersion(string $streamId, int $expectedVersion, ?Throwable $previous = null): self
     {
-        return new self(sprintf(
-            'Concurrent write to stream "%s": expected it to be at version %d.',
-            $streamId,
-            $expectedVersion,
-        ));
+        // The original database error is kept: a duplicate key, a deadlock and a
+        // lock-wait timeout all arrive here as the same conflict, and without the
+        // cause they become indistinguishable when something needs diagnosing.
+        return new self(
+            sprintf(
+                'Concurrent write to stream "%s": expected it to be at version %d.',
+                $streamId,
+                $expectedVersion,
+            ),
+            0,
+            $previous,
+        );
     }
 }

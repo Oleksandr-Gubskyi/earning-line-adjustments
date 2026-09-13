@@ -6,6 +6,8 @@ namespace Tests\Unit\Application\Repository;
 
 use Payroll\Application\Exception\ConcurrencyConflict;
 use Payroll\Application\Exception\EarningLineNotFound;
+use Payroll\Application\Port\EventStore;
+use Payroll\Application\Stream\EventStream;
 use Payroll\Domain\EarningLine\AdjustmentComment;
 use Payroll\Domain\EarningLine\EarningLine;
 use Payroll\Domain\EarningLine\EarningLineId;
@@ -13,6 +15,7 @@ use Payroll\Domain\Money;
 use Payroll\Infrastructure\EventStore\InMemoryEventStore;
 use Payroll\Infrastructure\Repository\EventSourcedEarningLineRepository;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 final class EventSourcedEarningLineRepositoryTest extends TestCase
 {
@@ -81,6 +84,36 @@ final class EventSourcedEarningLineRepositoryTest extends TestCase
         $repository->save($line);
 
         self::assertSame(3, $store->load($id)->currentVersion);
+    }
+
+    public function test_a_failed_save_leaves_the_line_exactly_as_it_was(): void
+    {
+        $failing = new class implements EventStore
+        {
+            public function load(EarningLineId $id): EventStream
+            {
+                return EventStream::empty();
+            }
+
+            public function append(EarningLineId $id, int $expectedVersion, array $events): void
+            {
+                throw new RuntimeException('the database went away');
+            }
+        };
+
+        $line = EarningLine::calculate(EarningLineId::generate(), Money::fromDecimalString('1000.00'));
+
+        try {
+            (new EventSourcedEarningLineRepository($failing))->save($line);
+            self::fail('The save should have failed.');
+        } catch (RuntimeException) {
+            // expected
+        }
+
+        // commit() must not have run: dropping the events here would lose work that
+        // was never written, and leave the aggregate claiming a version it has not got.
+        self::assertCount(1, $line->pendingEvents());
+        self::assertSame(0, $line->version());
     }
 
     public function test_a_stale_line_cannot_overwrite_a_newer_one(): void
