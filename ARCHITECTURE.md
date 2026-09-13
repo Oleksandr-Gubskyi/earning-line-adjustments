@@ -183,7 +183,7 @@ CREATE TABLE domain_events (
   payload        JSON         NOT NULL,
   recorded_at    DATETIME(6)  NOT NULL,
   UNIQUE KEY uniq_stream_version (stream_id, stream_version)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 - First event is `stream_version = 1`; `expectedVersion` for a new stream is `0`.
@@ -220,9 +220,13 @@ validation:** otherwise tightening a rule later would make old streams unreadabl
 Optimistic, with the unique index as the sole arbiter.
 
 - `Illuminate\Database\UniqueConstraintViolationException` → `ConcurrencyConflict`
-- `Illuminate\Database\DeadlockException` → `ConcurrencyConflict` (crossing batches can produce
-  1213/40001 rather than 1062)
+- any other `QueryException` that Laravel's `ConcurrencyErrorDetector` recognises (deadlock,
+  lock-wait timeout, serialization failure) → `ConcurrencyConflict`
 - anything else propagates
+
+Note that a deadlock does **not** arrive as `Illuminate\Database\DeadlockException`: the framework
+raises that only from a nested transaction. At this level it is a plain `QueryException`, which is
+why detection goes through the framework's own detector rather than a hand-written list of codes.
 
 Catch the specific type **above** `QueryException`, which it extends.
 
