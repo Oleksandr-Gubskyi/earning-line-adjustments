@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Deliberately the same commands a reviewer runs locally, through the same
+      # containers, so CI cannot pass on an environment nobody else has.
+      - name: Start containers
+        run: |
+          cp .env.example .env
+          docker compose up -d --build
+
+      - name: Install dependencies
+        run: docker compose exec -T app composer install --no-interaction --no-progress
+
+      - name: Prepare application
+        run: |
+          docker compose exec -T app php artisan key:generate
+          docker compose exec -T app php artisan migrate --force
+
+      - name: Code style
+        run: docker compose exec -T app vendor/bin/pint --test
+
+      - name: Static analysis
+        run: docker compose exec -T app vendor/bin/phpstan analyse --no-progress
+
+      - name: Tests
+        run: docker compose exec -T app vendor/bin/phpunit
+
+      - name: The domain must not depend on the framework
+        run: |
+          if grep -rl 'Illuminate' src/Domain src/Application; then
+            echo '::error::The framework leaked into the domain or application layer.'
+            exit 1
+          fi
+          echo 'No Illuminate imports in src/Domain or src/Application.'
