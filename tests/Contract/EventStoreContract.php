@@ -12,7 +12,6 @@ use Payroll\Domain\EarningLine\Event\ManualAdjustmentAdded;
 use Payroll\Domain\EarningLine\Event\SystemValueFrozen;
 use Payroll\Domain\EarningLine\Event\SystemValueRecalculated;
 use Payroll\Domain\Money;
-use PHPUnit\Framework\TestCase;
 
 /**
  * Behaviour every EventStore must have, run against each implementation.
@@ -20,8 +19,12 @@ use PHPUnit\Framework\TestCase;
  * Two implementations of one port are worth nothing without this: the in-memory
  * store is only a legitimate stand-in for the fast suite if it is held to exactly
  * the same rules as the one that talks to a database.
+ *
+ * A trait rather than a base class, because the two implementations need different
+ * bases: the in-memory one must not boot the framework, and the SQL one needs a
+ * migrated database.
  */
-abstract class EventStoreContract extends TestCase
+trait EventStoreContract
 {
     abstract protected function createStore(): EventStore;
 
