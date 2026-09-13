@@ -18,21 +18,37 @@ last system-calculated value, even if the underlying source data changes later.
 
 ## Setup
 
-Requires Docker. Nothing else needs to be installed.
+Requires Docker. Nothing else needs to be installed -- PHP, Composer and MySQL all
+run in containers.
 
 ```bash
 git clone git@github.com:Oleksandr-Gubskyi/earning-line-adjustments.git
 cd earning-line-adjustments
+
+cp .env.example .env
 docker compose up -d --build
+
 docker compose exec app composer install
+docker compose exec app php artisan key:generate
 docker compose exec app php artisan migrate
 ```
+
+The app container waits for MySQL to report healthy before starting, so the
+migration cannot race the database on a first run. Migrations are an explicit
+step rather than a hidden entrypoint side effect.
 
 Run the tests:
 
 ```bash
-docker compose exec app vendor/bin/phpunit
+docker compose exec app vendor/bin/phpunit                      # everything
+docker compose exec app vendor/bin/phpunit --testsuite=Unit     # domain only, no framework boot
+docker compose exec app composer check                          # style, static analysis, tests
 ```
+
+Integration tests run against MySQL in a separate `payroll_test` schema. They do
+not run on SQLite: the schema uses MySQL specific types, and more importantly the
+concurrency test would pass under SQLite while proving nothing about the database
+this ships with.
 
 Run the assignment scenario end to end:
 
@@ -40,16 +56,18 @@ Run the assignment scenario end to end:
 docker compose exec app php artisan payroll:demo
 ```
 
-It executes the eight steps from the specification through the real command handlers against MySQL,
-prints the value after each step, renders the final audit history, and verifies the result against
-the expected `$1,104.45`. It prints the line id, which you can then inspect independently:
+It executes the eight steps from the specification through the real command
+handlers against MySQL, prints the value after each step, renders the resulting
+audit history, and checks the result against the expected `$1,104.45` -- exiting
+non-zero if it ever stops matching. It prints the line id, which you can inspect
+independently:
 
 ```bash
 docker compose exec app php artisan payroll:show <lineId>
 ```
 
-That command reads the persisted event stream in a separate process and rebuilds the audit history
-from it.
+That command reads the persisted event stream and rebuilds the audit history from
+it, in a separate process from the one that wrote it.
 
 ## Architecture summary
 
