@@ -105,8 +105,9 @@ total. It does **not** hold a collection of adjustments.
 
 Given the task is about a history of manual adjustments, this deserves an explicit answer: the
 immutable history *is* the stream of `ManualAdjustmentAdded` events, and the read side rebuilds
-amounts, comments and ordering from it. A collection inside the aggregate would be a second
-representation of the same truth sitting next to the stream, and two representations drift.
+amounts, comments and ordering from it. A collection inside the aggregate would be derived state
+like the total, so it would not drift on its own -- it is left out because no decision the aggregate
+makes needs it, and unused state invites reads from the wrong side.
 
 The cost is real and worth stating: the aggregate cannot report how many adjustments it has without
 consulting the event store, and the append-only guarantee rests on the stream rather than on the

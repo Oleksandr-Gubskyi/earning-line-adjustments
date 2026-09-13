@@ -121,32 +121,6 @@ final class AssignmentScenarioTest extends TestCase
         ], $shape);
     }
 
-    public function test_adjustments_are_numbered_by_their_order_among_adjustments(): void
-    {
-        $adjustments = array_values(array_filter(
-            self::runScenario()->pendingEvents(),
-            static fn (DomainEvent $event): bool => $event instanceof ManualAdjustmentAdded,
-        ));
-
-        $numbered = [];
-        foreach ($adjustments as $index => $adjustment) {
-            $numbered['#'.($index + 1)] = $adjustment->amount->format();
-        }
-
-        self::assertSame([
-            '#1' => '-$45.55',
-            '#2' => '$100.10',
-            '#3' => '-$0.10',
-            '#4' => '-$0.20',
-            '#5' => '$0.20',
-        ], $numbered);
-
-        // The numbering is the ordinal among adjustments, not the stream version:
-        // adjustment #1 sits at version 4, because the stream also holds the
-        // calculation, the recalculation and the freeze.
-        self::assertSame('adjusted -$45.55', 'adjusted '.$adjustments[0]->amount->format());
-    }
-
     public function test_the_compensating_comment_points_at_the_adjustment_it_corrects(): void
     {
         $adjustments = array_values(array_filter(

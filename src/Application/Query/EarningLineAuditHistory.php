@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Payroll\Application\Query;
 
+use Payroll\Application\Exception\CorruptedEventStream;
 use Payroll\Application\Exception\EarningLineNotFound;
 use Payroll\Application\Port\EventStore;
 use Payroll\Domain\EarningLine\EarningLineId;
@@ -45,10 +46,21 @@ final readonly class EarningLineAuditHistory
         $isFrozen = false;
         $adjustments = [];
 
+        $seenCalculation = false;
+
         foreach ($stream->events as $recorded) {
             $event = $recorded->event;
 
             if ($event instanceof EarningLineCalculated) {
+                // A second creation means the stream was written by something other
+                // than the repository. The aggregate would reset on it and this fold
+                // would not, so the two would quietly report different numbers -- the
+                // worst possible failure for an audit trail. Refuse instead.
+                if ($seenCalculation) {
+                    throw CorruptedEventStream::hasASecondCreation($id->toString());
+                }
+
+                $seenCalculation = true;
                 $systemValue = $event->systemValue;
             } elseif ($event instanceof SystemValueRecalculated) {
                 $systemValue = $event->systemValue;

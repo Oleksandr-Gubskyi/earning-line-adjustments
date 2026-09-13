@@ -63,9 +63,11 @@ There is **no `ManualAdjustment` entity inside the aggregate.** The immutable hi
 ordering and the audit view from that stream.
 
 This is a deliberate trade-off and the most likely question a reviewer will ask, given the task is
-titled *History of Manual Adjustments*. The reasoning: a collection inside the aggregate would be a
-**second representation of the same truth** sitting next to the stream, and two representations
-drift. The aggregate holds decision state; the stream holds history.
+titled *History of Manual Adjustments*. The honest reasoning is narrower than "two representations
+drift": a collection rebuilt in `apply()` would be derived state, exactly like `adjustmentsTotal`,
+so it would not drift on its own. It is left out because **no decision the aggregate makes needs
+it** — the freeze, the zero check and the current value are all answerable without it — and state an
+aggregate does not use is state someone will later be tempted to read from the wrong side. The aggregate holds decision state; the stream holds history.
 
 The honest cost: the aggregate cannot answer "how many adjustments do I have" without going to the
 event store, and the append-only rule is no longer enforced by the absence of a mutator on a

@@ -7,6 +7,7 @@ namespace Tests\Unit\Application\Query;
 use Payroll\Application\Command\AddManualAdjustment;
 use Payroll\Application\Command\CalculateEarningLine;
 use Payroll\Application\Command\RecalculateSystemValue;
+use Payroll\Application\Exception\CorruptedEventStream;
 use Payroll\Application\Exception\EarningLineNotFound;
 use Payroll\Application\Handler\AddManualAdjustmentHandler;
 use Payroll\Application\Handler\CalculateEarningLineHandler;
@@ -16,6 +17,9 @@ use Payroll\Application\Query\AdjustmentEntry;
 use Payroll\Application\Query\EarningLineAuditHistory;
 use Payroll\Domain\EarningLine\AdjustmentComment;
 use Payroll\Domain\EarningLine\EarningLineId;
+use Payroll\Domain\EarningLine\Event\EarningLineCalculated;
+use Payroll\Domain\EarningLine\Event\ManualAdjustmentAdded;
+use Payroll\Domain\EarningLine\Event\SystemValueFrozen;
 use Payroll\Domain\Money;
 use Payroll\Infrastructure\EventStore\InMemoryEventStore;
 use Payroll\Infrastructure\Repository\EventSourcedEarningLineRepository;
@@ -125,6 +129,26 @@ final class EarningLineAuditHistoryTest extends TestCase
         self::assertCount(5, $view->adjustments);
         self::assertTrue($view->isFrozen);
         self::assertSame('$54.45', $view->adjustmentsTotal->format());
+    }
+
+    public function test_a_stream_with_two_creations_is_refused_rather_than_guessed_at(): void
+    {
+        $id = EarningLineId::generate();
+
+        // Only the repository writes events, so this stream could not come from the
+        // command API. The aggregate resets on a second creation and this fold does
+        // not, which means the two would silently report different numbers -- the one
+        // failure an audit trail must never have.
+        $this->store->append($id, 0, [
+            new EarningLineCalculated(Money::fromDecimalString('1000.00')),
+            new SystemValueFrozen(Money::fromDecimalString('1000.00')),
+            new ManualAdjustmentAdded(Money::fromDecimalString('10.00'), 'Bonus'),
+            new EarningLineCalculated(Money::fromDecimalString('2000.00')),
+        ]);
+
+        $this->expectException(CorruptedEventStream::class);
+
+        $this->history->forLine($id);
     }
 
     private function runAssignmentScenario(): EarningLineId
