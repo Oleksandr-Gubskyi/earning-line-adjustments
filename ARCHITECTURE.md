@@ -240,7 +240,10 @@ seconds, so a competing writer would hang rather than fail fast.
 - `reconstitute()` calls `apply()` directly and **never** `recordThat()` — otherwise replayed events
   land in the uncommitted buffer and get written to the stream a second time.
 - Command methods validate invariants and record an event. **State changes only in `apply()`.**
-- After a successful append the aggregate commits: the buffer is cleared and the version advances.
+- `pendingEvents()` reads the buffer without consuming it; `commit()` clears it and advances the
+  version, and is called only after an append succeeds. Reading and consuming are separate so that a
+  failed append cannot lose the events, and so "a rebuilt line has nothing pending" is a real
+  property rather than an artefact of having just drained the buffer.
 
 ## 8. Testing
 
@@ -253,7 +256,7 @@ Tests that matter:
 - **Assignment scenario** — the eight steps, at the aggregate level and end-to-end, asserting
   `$1,104.45` and the full audit history.
 - **Replay equivalence** — live and reconstituted aggregates agree on every field and the version;
-  `releaseEvents()` on a reconstituted aggregate is **empty**; a further command produces identical
+  `pendingEvents()` on a reconstituted aggregate is **empty**; a further command produces identical
   events.
 - **Event store contract suite** — run against both `InMemoryEventStore` and `MySqlEventStore`, so
   two implementations of one port are proven to behave alike. In-memory must enforce
